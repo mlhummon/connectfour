@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+    <meta http-equiv="content-type" content="text/html; charset=utf-8" />
+    <title>Connect Four</title>
+    
+        <link href="css/style.css" rel="stylesheet" type="text/css" media="screen" />
+        <script type="text/javascript" src="./libs/jquery/jquery-1.9.1.min.js"></script>
+        <script type="text/javascript" src="./libs/bootstrap/js/bootstrap.min.js"></script>
+        <script type="text/javascript" src="./libs/d3/d3.v3.min.js"></script>
+        <script type="text/javascript" src="/socket.io/socket.io.js"></script>
+        <link   rel="stylesheet" type="text/css" href="./libs/bootstrap/css/bootstrap.css" media="screen"/>
+        <link rel="stylesheet" type="text/css" href="./libs/bootstrap/css/bootstrap-responsive.css" media="screen"/>
+
+        <script type="text/javascript">
+
+        var gameState = {
+            playerId        : null,
+            gameId          : null,
+            gameOver        : false
+        };
+
+	// Sets the interval for the animation
+	function dropPiece(column, stopAt, color, callBack){
+            var curRow = 5;
+            setTimeout(function(){
+                stepDown(column, stopAt, curRow, color, callBack);
+            }, 50);
+	}
+
+        function stepDown(column, stopAt, curRow, color, callBack){
+            $('#' + curRow + '_' + column).attr('src', 'images/' + color + '-board.png');
+            if(curRow === stopAt){
+                if(callBack){
+                    callBack.call();
+                }
+            }else{
+                setTimeout(function(){
+                    $('#' + curRow + '_' + column).attr('src', 'images/empty-board.png');
+                    curRow -= 1;
+                    stepDown(column, stopAt, curRow, color, callBack);
+                }, 50);
+            }
+        }
+
+        var createBoard = function(config){
+            var table = document.createElement("table");
+            var hRow = document.createElement("tr");
+
+            for(var i = 0; i < config.board.columns; i++){
+                var col     = document.createElement("th");
+                var img     = document.createElement("img");
+                    img.id  = config.board.rows + "_" + i;
+                    img.src = "images/empty.png";
+                col.appendChild(img);
+                hRow.appendChild(col);
+            }
+
+            table.appendChild(hRow);
+
+            for(var i = (config.board.rows-1); i >= 0; i--){
+                var row = document.createElement("tr")
+                for(var j = 0; j < config.board.columns; j++){
+                    var col     = document.createElement("td");
+                    var img     = document.createElement("img");
+                        img.id  = i + "_" + j;
+                        img.src = "images/empty-board.png";
+                    col.appendChild(img);
+                    row.appendChild(col);
+                }
+                table.appendChild(row);
+            }
+
+            document.getElementById("board").appendChild(table);
+
+        };
+
+        var makeMove = function(data){
+            var secondMove;
+            if(data.moves[0].win){
+                secondMove = function(){
+                    var msg = (!data.yours || data.yours) ? "You Win" : "You loose";
+                    alert(msg);
+                };
+            }else if(data.moves.length > 1){
+                secondMove = function(){
+                    dropPiece(
+                        data.moves[1].column,
+                        data.moves[1].row,
+                        data.moves[1].color,
+                        ((data.moves[1].win) ? function(){
+                            alert("You loose")
+                        }: function(){})
+                    );
+                };
+            }
+            dropPiece(
+                data.moves[0].column,
+                data.moves[0].row,
+                data.moves[0].color,
+                secondMove
+            );
+        };
+
+        var bindHover = function(config, color){
+            for(var i = 0; i < config.board.columns; i++){
+                var id = config.board.rows + "_" + i;
+                $("#" + id).hover(
+                    function() {
+                        $(this).attr('src', 'images/'+color+'.png');
+                    },
+                    function() {
+                        $(this).attr('src', 'images/empty.png');
+                    }
+                );
+            }
+        };
+
+        var bindEvents = function(config){
+            $("#cmp-init").click(function(){
+                $.ajax({
+                    url: "init/single",
+                    data: {playerId: gameState.playerId}
+                }).success(function(data) {
+                    if(data.status.proceed){
+                        $("#my-color").html(data.yourColor.toUpperCase());
+                        $("#cur-turn").html("YES");
+                        $("#game-status").show();
+                        bindHover(config, data.yourColor);
+                        gameState.gameId = data.gameId;
+                        for(var i = 0; i < config.board.columns; i++){
+                            var id = config.board.rows + "_" + i;
+                            $('#' + id).click(function() {
+                                $("#cur-turn").html("NO");                
+                                $.ajax({
+                                    url: "takeTurn",
+                                    data: {
+                                            column: $(this).attr("id").split("_")[1],
+                                            gameId:gameState.gameId,
+                                            playerId:gameState.playerId
+                                        }
+                                }).success(function(data) {
+                                    $("#cur-turn").html("YES");
+                                    if(data.status.proceed){
+                                        makeMove(data);
+                                    }else{
+                                        alert("error");                        
+                                    }
+                                }).fail(function() {
+
+                                });
+                            });
+                        }
+                        $('#myModal').modal('hide');
+                    }else{
+                        alert(data.message);
+                    }
+                }).fail(function() {
+                    alert("error");
+                });
+            });
+
+            $("#human-init").click(function(){
+                var socket = io.connect('/');
+                socket.on(gameState.playerId, function (data) {
+                    console.log("Heard back from socket", data);
+                    gameState.gameId = data.gameId;
+                    if(data.status.proceed){
+                        $("#my-color").html(data.yourColor.toUpperCase());
+                        $("#cur-turn").html((data.yourTurn) ? "YES" : "NO");
+                        $("#game-status").show();
+                        bindHover(config, data.yourColor);
+                        socket.removeAllListeners(gameState.playerId);
+                        for(var i = 0; i < config.board.columns; i++){
+                            var id = config.board.rows + "_" + i;
+                            $('#' + id).click(function() {
+                                socket.emit("takeTurn", {
+                                    playerId    : gameState.playerId,
+                                    column      : $(this).attr("id").split("_")[1],
+                                    gameId      : gameState.gameId
+                                });
+                            });
+                        }
+                        socket.on(gameState.gameId, function (data) {
+                            console.log("Heard back from socket", data);
+                            $("#cur-turn").html((data.yourTurn) ? "YES" : "NO");
+                            if(data.status.proceed){
+                                makeMove(data);
+                            }else{
+                                alert("error");                        
+                            }
+                        });
+                        $('#myModal').modal('hide');
+                    }
+                });
+                socket.once('ready', function (data) {
+                    console.log("Ready", data);
+                    socket.emit('initMulti', { playerId: gameState.playerId });
+                });
+            });
+        }
+
+        $(function(){
+            $.getJSON("/info", function(data){
+                gameState.playerId = data.userId;
+                if(data.playerWaiting){
+                    $("#human-info").append("Player is waiting");
+                }else{                    
+                    $("#human-info").append("No player waiting");
+                }
+                $.getJSON("js/Configuration.json", function(config){
+                    createBoard(config);
+                    bindEvents(config);
+                    $('#myModal').modal('show');
+                });
+            });
+        });
+
+    </script>
+        <style>
+            div#content ul li span{
+                font-weight: bold;             
+            }
+            div#content ul{
+                font-style: italic;                
+            }
+            input[type="checkbox"]{
+                margin-bottom: 3px;
+                margin-top: 0px;
+            }
+            div.span3{
+                line-height: 30px;
+            }
+            label{
+                display:inline;
+            }
+            .row:after{
+                margin-bottom: 3px;
+            }
+        </style>
+
+    </head>
+    <body>
+        <div id="myModal" class="modal show fade" tabindex="-1" role="dialog" aria-labelledby="myModalLabel" aria-hidden="true">
+            <div class="modal-header">
+                <h3 id="myModalLabel">What would you like to play against?</h3>
+            </div>
+            <div class="modal-body">
+                <div style="width:500px;margin: 0 auto">
+                    <div class="row show-grid">
+                        <div title="" data-original-title="" class="span2" style="text-align:right;">
+                            <button aria-hidden="true" class="btn btn-block" id="cmp-init">Computer</button>                            
+                        </div>
+                        <div title="" data-original-title="" class="span3">
+                            <input id='notify-player' type="checkbox"/>
+                            <label for="notify-player">
+                                Notify me if a human player arrives
+                            </label>
+                        </div>
+                    </div>
+                    <div class="row show-grid">
+                        <div title="" data-original-title="" class="span2" style="text-align:right;">
+                            <button aria-hidden="true" class="btn btn-block" id="human-init">Human</button>                        
+                        </div>
+                        <div title="" data-original-title="" class="span3">
+                            <span id="human-info"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer"></div>
+        </div>
+        <div id="wrapper">
+          <div id="wrapper2">
+            <div id="header">
+              <div id="logo">
+                <h1>Connect Four</h1>
+              </div>
+            </div>
+            <div id="page">
+              <div id="content">
+                <ul id="game-status" style="position:absolute;top:192px;padding:0px;margin:0px;left:290px;display:none;">
+                    Your Game Status
+                    <ul>
+                        <li>Color : <span id="my-color">Black</span></li>
+                        <li>Turn : <span id="cur-turn">No</span></li>
+                    </ul>
+                </ul>
+                <div class="post">
+                    <div id="board">
+                    </div>
+                </div>
+                <div class="actions">
+                  <input type="button" id="button" value="Reset Board" disabled="disabled"/>
+                </div>              
+              </div>
+              <div id="widebar">
+                <div id="colA">
+                  <h3>Wins: 0</h3>
+                </div>
+                <div id="colB">
+                  <h3>Losses: 0</h3>
+                </div>
+                <div id="colC">
+                  <h3>Ties: 0</h3>
+                </div>
+                <div style="clear: both;">&nbsp;</div>
+              </div>
+            </div>
+          </div>
+          <div id="footer">
+            <p>
+              &copy; 2013 Mark Hummon.
+              Design by <a href="http://www.nodethirtythree.com/">NodeThirtyThree</a> +
+              <a href="http://www.freecsstemplates.org/">Free CSS Templates</a>
+            </p>
+          </div>
+        </div>
+    </body>
+</html>

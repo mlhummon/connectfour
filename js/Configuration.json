@@ -1,0 +1,9 @@
+{
+    "server"    : "localhost",
+    "port"      : "8000",
+    "logLevel"  : "DEBUG",
+    "board"     : {
+        "rows"      : 6,
+        "columns"   : 7
+    }
+}
